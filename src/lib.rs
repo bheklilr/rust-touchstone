@@ -298,18 +298,47 @@ pub mod ts {
         ($i:expr, $($args:tt)*) => ({sep!($i, comment_line, $($args)*)})
     }
 
+    #[derive(Debug)]
+    enum Metadata {
+        TwoPortOrder(TwoPortOrder),
+        NumberOfFrequencies(i32),
+        NumberOfNoiseFrequencies(i32),
+        Reference(Vec<f64>),
+        Information(HashMap<String, String>),
+    }
+
     named!(
-        header<()>,
-        do_parse!(
+        metadata<Vec<Metadata>>,
+        many0!(alt!(
+            map!(two_port_order, Metadata::TwoPortOrder) |
+            map!(number_of_frequencies, Metadata::NumberOfFrequencies) |
+            map!(number_of_noise_frequencies, Metadata::NumberOfNoiseFrequencies) |
+            map!(reference, Metadata::Reference) |
+            map!(information, Metadata::Information)
+        ))
+    );
+
+    named!(
+        header<((i32, i32), OptionLine, i32, Vec<Metadata>)>,
+        comments!(do_parse!(
             ver: version >>
-        )
+            opt_line: option_line >>
+            num_ports: number_of_ports >>
+            metadata: metadata >>
+            (ver, opt_line, num_ports, metadata)
+        ))
     );
 
     mod test {
+        use super::*;
+        use nom;
+
         #[test]
         fn test_header() {
             assert_eq!(
-                , );
+                header(b"[version] 2.0\n#\n[number of ports] 1"),
+                nom::IResult::Done(&b""[..], ((2i32, 0i32), Default::default(), 1, vec![]))
+            );
         }
     }
 }
