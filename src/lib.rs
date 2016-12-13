@@ -1,6 +1,7 @@
 #[macro_use]
 extern crate nom;
 
+#[allow(dead_code)]
 pub mod ts {
 
     use std;
@@ -8,10 +9,9 @@ pub mod ts {
     use std::collections::HashMap;
     use std::str::from_utf8;
 
-    use nom;
     use nom::*;
 
-    #[derive(Debug)]
+    #[derive(Debug, PartialEq)]
     pub enum Format {
         RI,
         DB,
@@ -35,7 +35,7 @@ pub mod ts {
         }
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, PartialEq)]
     pub enum FreqUnits {
         Hz,
         KHz,
@@ -61,7 +61,7 @@ pub mod ts {
         }
     }
 
-    #[derive(Debug,)]
+    #[derive(Debug, PartialEq)]
     pub enum Domain {
         Scattering,
         Transfer,
@@ -91,7 +91,7 @@ pub mod ts {
         }
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, PartialEq)]
     pub struct OptionLine {
         pub freq_units: FreqUnits,
         pub domain: Domain,
@@ -111,13 +111,13 @@ pub mod ts {
     }
 
     #[allow(non_camel_case_types)]
-    #[derive(Debug)]
+    #[derive(Debug, PartialEq)]
     pub enum TwoPortOrder {
         TPO_12_21,
         TPO_21_12,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, PartialEq)]
     pub struct NoisePoint {
         pub frequency: f64,
         pub minimum_noise_db: f64,
@@ -142,21 +142,43 @@ pub mod ts {
     }
 
     named!(
-        comment_line<()>,
-        value!((), delimited!(char!('['), take_until!("\n"), char!('\n')))
+        int<i32>,
+        map_res!(
+            map_res!(
+                ws!(digit),
+                from_utf8
+            ),
+            std::str::FromStr::from_str
+        )
     );
 
-    named!(comment_block<()>, value!((), many0!(comment_line)));
+    fn is_valid_float_char(c: u8) -> bool {
+        (c >= 48u8 && c <= 57) || // is_digit
+        (c == 43u8 || c == 45u8 || c == 46u8) || // + or - or .
+        (c == 69u8 || c == 101u8) // E or e
+    }
+
+    named!(
+        float<f64>,
+        map_res!(
+            map_res!(
+                take_while!(is_valid_float_char),
+                from_utf8
+            ),
+            std::str::FromStr::from_str
+        )
+    );
+
+    named!(
+        comment_line<()>,
+        value!((), delimited!(char!('!'), take_until!("\n"), char!('\n')))
+    );
 
     named!(
         version<(i32, i32)>,
         do_parse!(
             tag_no_case!("[version]") >> many0!(space) >>
-            ver: map_opt!(
-                separated_pair!(digit, char!('.'), digit),
-                |(major, minor)| parse(major).and_then(
-                    |mjr| parse(minor).map(|mnr| (mjr, mnr)))
-            ) >>
+            ver: separated_pair!(int, char!('.'), int) >>
             (ver)
         )
     );
@@ -171,43 +193,49 @@ pub mod ts {
     }
 
     named!(
-        float<f64>,
-        map_opt!(take_while!(not_whitespace), parse)
-    );
-
-    named!(
         option_line<OptionLine>,
         do_parse!(
             char!('#') >>
-            many1!(space) >>
-            freq_units: opt!(
-                alt!(
-                    value!(FreqUnits::Hz, tag_no_case!("hz")) |
+            units: opt!(complete!(do_parse!(
+                many1!(space) >>
+                v: alt!(
+                    value!(FreqUnits::Hz,  tag_no_case!("hz"))  |
                     value!(FreqUnits::KHz, tag_no_case!("khz")) |
                     value!(FreqUnits::MHz, tag_no_case!("mhz")) |
                     value!(FreqUnits::GHz, tag_no_case!("ghz"))
-                )
-            ) >>
-            domain: opt!(
-                alt!(
+                ) >>
+                (v)
+            ))) >>
+            domain: opt!(complete!(do_parse!(
+                many1!(space) >>
+                v: alt!(
                     value!(Domain::Scattering, tag_no_case!("s")) |
-                    value!(Domain::Transfer, tag_no_case!("t")) |
+                    value!(Domain::Transfer,   tag_no_case!("t")) |
                     value!(Domain::Admittance, tag_no_case!("y")) |
-                    value!(Domain::Impedance, tag_no_case!("z")) |
-                    value!(Domain::HybridH, tag_no_case!("h")) |
-                    value!(Domain::HybridG, tag_no_case!("g"))
-                )
-            ) >>
-            format: opt!(
-                alt!(
+                    value!(Domain::Impedance,  tag_no_case!("z")) |
+                    value!(Domain::HybridH,    tag_no_case!("h")) |
+                    value!(Domain::HybridG,    tag_no_case!("g"))
+                ) >>
+                (v)
+            ))) >>
+            format: opt!(complete!(do_parse!(
+                many1!(space) >>
+                v: alt!(
                     value!(Format::DB, tag_no_case!("db")) |
                     value!(Format::MA, tag_no_case!("ma")) |
                     value!(Format::RI, tag_no_case!("ri"))
-                )
-            ) >>
-            system_impedance: opt!(float) >>
+                ) >>
+                (v)
+            ))) >>
+            system_impedance: opt!(complete!(do_parse!(
+                many1!(space) >>
+                tag!("R") >>
+                many1!(space) >>
+                v: float >>
+                (v)
+            ))) >>
             (OptionLine {
-                freq_units: freq_units.unwrap_or(Default::default()),
+                freq_units: units.unwrap_or(Default::default()),
                 domain: domain.unwrap_or(Default::default()),
                 format: format.unwrap_or(Default::default()),
                 system_impedance: system_impedance
@@ -219,7 +247,7 @@ pub mod ts {
         number_of_ports<i32>,
         do_parse!(
             tag_no_case!("[number of ports]") >> many0!(space) >>
-            num_ports: map_opt!(take_until!("\n"), parse) >>
+            num_ports: int >>
             (num_ports)
         )
     );
@@ -258,7 +286,7 @@ pub mod ts {
         reference<Vec<f64>>,
         do_parse!(
             tag_no_case!("[reference]") >> many0!(multispace) >>
-            refs: many1!(float) >>
+            refs: many1!(ws!(float)) >>
             (refs)
         )
     );
@@ -274,7 +302,7 @@ pub mod ts {
             char!(']') >>
             many0!(space) >>
             arg: map_res!(
-                take_until_and_consume!("\n"),
+                take_until!("\n"),
                 |x| from_utf8(x).map(|s| s.trim().to_string())
             ) >>
             (kw, "".to_string())
@@ -283,22 +311,22 @@ pub mod ts {
 
     named!(
         information<HashMap<String, String>>,
-        do_parse!(
-            tag_no_case!("[begin information") >> many0!(space) >> many1!(newline) >>
-            vals: map!(
-                many0!(kwarg),
+        ws!(delimited!(
+            tag_no_case!("[begin information]"),
+            map!(
+                many0!(ws!(kwarg)),
                 |v: Vec<(String, String)>| v.iter().cloned().collect()
-            ) >>
-            tag_no_case!("[end information]") >>
-            (vals)
-        )
+            ),
+            tag_no_case!("[end information]")
+        ))
     );
 
     macro_rules! comments {
         ($i:expr, $($args:tt)*) => ({sep!($i, comment_line, $($args)*)})
     }
 
-    #[derive(Debug)]
+    #[allow(dead_code)]
+    #[derive(Debug, PartialEq)]
     enum Metadata {
         TwoPortOrder(TwoPortOrder),
         NumberOfFrequencies(i32),
@@ -309,18 +337,17 @@ pub mod ts {
 
     named!(
         metadata<Vec<Metadata>>,
-        many0!(alt!(
+        many0!(ws!(alt!(
             map!(two_port_order, Metadata::TwoPortOrder) |
             map!(number_of_frequencies, Metadata::NumberOfFrequencies) |
             map!(number_of_noise_frequencies, Metadata::NumberOfNoiseFrequencies) |
-            map!(reference, Metadata::Reference) |
-            map!(information, Metadata::Information)
-        ))
+            map!(reference, Metadata::Reference)
+        )))
     );
 
     named!(
         header<((i32, i32), OptionLine, i32, Vec<Metadata>)>,
-        comments!(do_parse!(
+        ws!(do_parse!(
             ver: version >>
             opt_line: option_line >>
             num_ports: number_of_ports >>
@@ -329,15 +356,64 @@ pub mod ts {
         ))
     );
 
+    #[allow(unused_imports)]
     mod test {
         use super::*;
         use nom;
 
+        fn done<'a, T>(val: T) -> nom::IResult<&'a [u8], T> {
+            nom::IResult::Done(&b""[..], val)
+        }
+
+        #[test]
+        fn test_comment_line() {
+            assert_eq!(comment_line(b"!test\n"), done(()));
+        }
+
+        #[test]
+        fn test_version() {
+            assert_eq!(version(b"[version] 2.0"), done((2, 0)));
+        }
+
+        #[test]
+        fn test_option_line() {
+            assert_eq!(option_line(b"#"), done(Default::default()))
+        }
+
+        #[test]
+        fn test_number_of_ports() {
+            assert_eq!(number_of_ports(b"[number of ports] 1"), done(1));
+        }
+
         #[test]
         fn test_header() {
             assert_eq!(
-                header(b"[version] 2.0\n#\n[number of ports] 1"),
-                nom::IResult::Done(&b""[..], ((2i32, 0i32), Default::default(), 1, vec![]))
+                header(b"\
+                    [version] 2.0\n\
+                    # Hz DB R 25\n\
+                    [number of ports] 4\n\
+                    [number of frequencies] 20\n\
+                    [two-port order] 12_21\n\
+                    [Number of noise frequenCIES] 1\n\
+                    [Reference]\n\
+                    25.0 50 5.0e1 100\n\
+                "),
+                done((
+                    (2, 0),
+                    OptionLine {
+                        freq_units: FreqUnits::Hz,
+                        domain: Domain::Scattering,
+                        format: Format::DB,
+                        system_impedance: Some(25.0),
+                    },
+                    4,
+                    vec![
+                        Metadata::NumberOfFrequencies(20),
+                        Metadata::TwoPortOrder(TwoPortOrder::TPO_12_21),
+                        Metadata::NumberOfNoiseFrequencies(1),
+                        Metadata::Reference(vec![25.0, 50.0, 50.0, 100.0])
+                    ]
+                ))
             );
         }
     }
