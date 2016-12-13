@@ -1,0 +1,7 @@
+[package]
+name = "touchstone"
+version = "0.1.0"
+authors = ["Aaron Stevens <bheklilr2@gmail.com>"]
+
+[dependencies]
+nom = "^2.0"
