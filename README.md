@@ -27,7 +27,7 @@ pub fn main() {
     let data = ts::parse_touchstone(DATA).unwrap();
     println!("{:?}", data.num_ports);  // prints "4"
     println!("{:?}", data.option_line.freq_units);  // prints "DB"
-    println!("{:?}", data.length());  // prints 2000
+    println!("{:?}", data.length());  // prints "2000"
 }
 ```
 
