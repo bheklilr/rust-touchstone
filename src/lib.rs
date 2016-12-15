@@ -105,7 +105,7 @@ pub mod ts {
                 freq_units: Default::default(),
                 domain: Default::default(),
                 format: Default::default(),
-                system_impedance: Default::default()
+                system_impedance: Default::default(),
             }
         }
     }
@@ -139,6 +139,11 @@ pub mod ts {
         }
     }
 
+    type ParamPoint = (f64, f64);
+    type ParamData = Vec<ParamPoint>;
+
+    type NoiseData = Vec<NoisePoint>;
+
     #[derive(Debug)]
     pub struct Touchstone2 {
         pub num_ports: i32,
@@ -147,8 +152,17 @@ pub mod ts {
         pub reference_impedance: Option<Vec<f64>>,
         pub information: HashMap<String, String>,
         pub matrix_format: Option<MatrixFormat>,
-        pub network_data: Vec<Box<[(f64, f64)]>>,
-        pub noise_data: Option<Box<[NoisePoint]>>,
+        pub network_data: Vec<ParamData>,
+        pub noise_data: Option<NoiseData>,
+    }
+
+    impl Touchstone2 {
+        pub fn parse<'a>(bytes: &'a str) -> Result<Touchstone2, ()> {
+            match touchstone2(bytes.as_bytes()) {
+                IResult::Done(_, t) => Ok(t),
+                _ => Err(()),
+            }
+        }
     }
 
     fn parse<T: std::str::FromStr>(bytes: &[u8]) -> Option<T> {
@@ -199,12 +213,7 @@ pub mod ts {
     );
 
     fn not_whitespace(c: u8) -> bool {
-        !(
-            c == ' '  as u8 ||
-            c == '\t' as u8 ||
-            c == '\n' as u8 ||
-            c == '\r' as u8
-        )
+        !(c == ' ' as u8 || c == '\t' as u8 || c == '\n' as u8 || c == '\r' as u8)
     }
 
     named!(option_line<OptionLine>,
@@ -407,6 +416,22 @@ pub mod ts {
             (ver, opt_line, num_ports, metadata)
         ))
     );
+
+    fn network_data(input: &[u8],
+                    num_ports: i32,
+                    num_freqs: i32,
+                    matrix_format: MatrixFormat)
+                    -> IResult<&[u8], Vec<ParamData>> {
+        unimplemented!();
+    }
+
+    fn noise_data(input: &[u8], num_noise_freqs: i32) -> IResult<&[u8], Vec<NoiseData>> {
+        unimplemented!();
+    }
+
+    fn touchstone2(input: &[u8]) -> IResult<&[u8], Touchstone2> {
+        unimplemented!();
+    }
 
     #[allow(unused_imports)]
     mod test {
