@@ -141,8 +141,7 @@ pub mod ts {
         from_utf8(bytes).ok().and_then(|s| s.trim().parse().ok())
     }
 
-    named!(
-        int<i32>,
+    named!(int<i32>,
         map_res!(
             map_res!(
                 ws!(digit),
@@ -158,8 +157,7 @@ pub mod ts {
         (c == 69u8 || c == 101u8) // E or e
     }
 
-    named!(
-        float<f64>,
+    named!(float<f64>,
         map_res!(
             map_res!(
                 take_while!(is_valid_float_char),
@@ -169,17 +167,18 @@ pub mod ts {
         )
     );
 
-    named!(
-        comment_line<()>,
+    named!(comment_line<()>,
         value!((), delimited!(char!('!'), take_until!("\n"), char!('\n')))
     );
+    named!(comment_block<()>,
+        value!((), many0!(comment_line))
+    );
 
-    named!(
-        version<(i32, i32)>,
+    named!(version<(i32, i32)>,
         do_parse!(
             tag_no_case!("[version]") >> many0!(space) >>
             ver: separated_pair!(int, char!('.'), int) >>
-            opt!(complete!(comment_line)) >>
+            opt!(complete!(comment_block)) >>
             (ver)
         )
     );
@@ -193,8 +192,7 @@ pub mod ts {
         )
     }
 
-    named!(
-        option_line<OptionLine>,
+    named!(option_line<OptionLine>,
         do_parse!(
             char!('#') >>
             units: opt!(complete!(do_parse!(
@@ -235,7 +233,7 @@ pub mod ts {
                 v: float >>
                 (v)
             ))) >>
-            opt!(complete!(comment_line)) >>
+            opt!(complete!(comment_block)) >>
             (OptionLine {
                 freq_units: units.unwrap_or(Default::default()),
                 domain: domain.unwrap_or(Default::default()),
@@ -245,93 +243,98 @@ pub mod ts {
         )
     );
 
-    named!(
-        number_of_ports<i32>,
+    named!(number_of_ports<i32>,
         do_parse!(
             tag_no_case!("[number of ports]") >> many0!(space) >>
             num_ports: int >>
-            opt!(complete!(comment_line)) >>
+            opt!(complete!(comment_block)) >>
             (num_ports)
         )
     );
 
-    named!(
-        two_port_order<TwoPortOrder>,
+    named!(two_port_order<TwoPortOrder>,
         do_parse!(
             tag_no_case!("[two-port order]") >> many0!(space) >>
             tpo: alt!(
                 value!(TwoPortOrder::TPO_12_21, tag!("12_21")) |
                 value!(TwoPortOrder::TPO_21_12, tag!("21_12"))
             ) >>
-            opt!(complete!(comment_line)) >>
+            opt!(complete!(comment_block)) >>
             (tpo)
         )
     );
 
-    named!(
-        number_of_frequencies<i32>,
+    named!(number_of_frequencies<i32>,
         do_parse!(
             tag_no_case!("[number of frequencies]") >> many0!(space) >>
             num_freqs: map_opt!(take_until!("\n"), parse) >>
-            opt!(complete!(comment_line)) >>
+            opt!(complete!(comment_block)) >>
             (num_freqs)
         )
     );
 
-    named!(
-        number_of_noise_frequencies<i32>,
+    named!(number_of_noise_frequencies<i32>,
         do_parse!(
             tag_no_case!("[number of noise frequencies]") >> many0!(space) >>
             num_freqs: map_opt!(take_until!("\n"), parse) >>
-            opt!(complete!(comment_line)) >>
+            opt!(complete!(comment_block)) >>
             (num_freqs)
         )
     );
 
-    named!(
-        reference<Vec<f64>>,
+    named!(reference<Vec<f64>>,
         do_parse!(
             tag_no_case!("[reference]") >> many0!(alt!(value!((), multispace) | comment_line)) >>
             refs: many1!(ws!(float)) >>
-            opt!(complete!(comment_line)) >>
+            opt!(complete!(comment_block)) >>
             (refs)
         )
     );
 
-    named!(
-        kwarg<(String, String)>,
+    named!(kwarg<(String, String)>,
         do_parse!(
             char!('[') >>
             kw: map_res!(
                 take_until!("]"),
-                |x| from_utf8(x).map(|s| s.trim().to_string())
+                |x| from_utf8(x).map(|s| s.trim().to_lowercase().to_string())
+                                .or_else(|e| Err(format!("{:?}", e)))
+                                .and_then(|s|
+                                    if s == "end information" {
+                                        Err("Reserved keyword".to_string())
+                                    } else {
+                                        Ok(s)
+                                    }
+                                )
             ) >>
             char!(']') >>
             many0!(space) >>
-            arg: map_res!(
-                take_until!("\n"),
-                |x| from_utf8(x).map(|s| s.trim().to_string())
-            ) >>
-            opt!(complete!(comment_line)) >>
-            (kw, "".to_string())
+            arg: dbg_dmp!(map!(
+                many0!(none_of!("!\n")),
+                |v: Vec<char>| {
+                    let s: String = v.into_iter().collect();
+                    s.trim().to_string()
+                }
+            )) >>
+            opt!(complete!(comment_block)) >>
+            (kw, arg)
         )
     );
 
-    named!(
-        information<HashMap<String, String>>,
+    named!(information<HashMap<String, String>>,
         ws!(delimited!(
             tag_no_case!("[begin information]"),
             map!(
-                many0!(ws!(kwarg)),
-                |v: Vec<(String, String)>| v.iter().cloned().collect()
+                many0!(ws!(
+                    alt!(
+                        map!(kwarg, Some) |
+                        value!(None, comment_line)
+                    )
+                )),
+                |v: Vec<Option<(_, _)>>| v.into_iter().filter_map(|x| x).collect()
             ),
             tag_no_case!("[end information]")
         ))
     );
-
-    macro_rules! comments {
-        ($i:expr, $($args:tt)*) => ({sep!($i, comment_line, $($args)*)})
-    }
 
     #[allow(dead_code)]
     #[derive(Debug, PartialEq)]
@@ -343,31 +346,31 @@ pub mod ts {
         Information(HashMap<String, String>),
     }
 
-    named!(
-        metadata<Vec<Metadata>>,
-        map!(many0!(ws!(alt!(
-            map!(two_port_order,              |x| Some(Metadata::TwoPortOrder(x))) |
-            map!(number_of_frequencies,       |x| Some(Metadata::NumberOfFrequencies(x))) |
-            map!(number_of_noise_frequencies, |x| Some(Metadata::NumberOfNoiseFrequencies(x))) |
-            map!(reference,                   |x| Some(Metadata::Reference(x))) |
-            value!(None, comment_line)
-        ))),
-        |v: Vec<Option<Metadata>>| v.into_iter().filter_map(|i| i).collect::<Vec<_>>()
+    named!(metadata<Vec<Metadata>>,
+        map!(
+            many0!(ws!(alt!(
+                map!(two_port_order,              |x| Some(Metadata::TwoPortOrder(x))) |
+                map!(number_of_frequencies,       |x| Some(Metadata::NumberOfFrequencies(x))) |
+                map!(number_of_noise_frequencies, |x| Some(Metadata::NumberOfNoiseFrequencies(x))) |
+                map!(reference,                   |x| Some(Metadata::Reference(x))) |
+                map!(information,                 |x| Some(Metadata::Information(x))) |
+                value!(None, comment_line)
+            ))),
+            |v: Vec<Option<Metadata>>| v.into_iter().filter_map(|i| i).collect::<Vec<_>>()
         )
     );
 
-    named!(
-        header<((i32, i32), OptionLine, i32, Vec<Metadata>)>,
+    named!(header<((i32, i32), OptionLine, i32, Vec<Metadata>)>,
         ws!(do_parse!(
-            opt!(complete!(comment_line)) >>
+            opt!(complete!(comment_block)) >>
             ver: version >>
-            opt!(complete!(comment_line)) >>
+            opt!(complete!(comment_block)) >>
             opt_line: option_line >>
-            opt!(complete!(comment_line)) >>
+            opt!(complete!(comment_block)) >>
             num_ports: number_of_ports >>
-            opt!(complete!(comment_line)) >>
+            opt!(complete!(comment_block)) >>
             metadata: metadata >>
-            opt!(complete!(comment_line)) >>
+            opt!(complete!(comment_block)) >>
             (ver, opt_line, num_ports, metadata)
         ))
     );
@@ -402,6 +405,67 @@ pub mod ts {
         fn test_number_of_ports() {
             assert_eq!(number_of_ports(b"[number of ports] 1"), done(1));
             assert_eq!(number_of_ports(b"[number of ports] 1!\n"), done(1));
+        }
+
+        #[test]
+        fn test_information() {
+            fn build_hashmap(kvs: Vec<(&str, &str)>) -> HashMap<String, String> {
+                kvs.into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+            }
+
+            assert_eq!(
+                information(b"\
+                    [Begin Information]\n\
+                    [End Information]\
+                    "
+                ),
+                done(HashMap::new())
+            );
+            assert_eq!(
+                information(b"\
+                    [Begin Information]\n\
+                    [Manufacturer] Keysight\n\
+                    [Model] E5071C\n\
+                    [End Information]\
+                    "
+                ),
+                done(build_hashmap(vec![
+                    ("manufacturer", "Keysight"),
+                    ("model", "E5071C")
+                ]))
+            );
+            assert_eq!(
+                information(b"\
+                    [Begin Information]\n\
+                    ! FooBarBaz\n\
+                    [Manufacturer] Keysight\n\
+                    [Model] E5071C ! Can I put a comment here?\n\
+                    [End Information]\
+                    "
+                ),
+                done(build_hashmap(vec![
+                    ("manufacturer", "Keysight"),
+                    ("model", "E5071C")
+                ]))
+            );
+            assert_eq!(
+                information(b"\
+                    [Begin Information]\n\
+                    ! FooBarBaz\n\
+                    [Manufacturer] Keysight\n\
+                    [Model] E5071C ! Can I put a comment here?\n\
+                    [End Info]\n\
+                    [Begin Information]  ! I'm just mean to myself\n\
+                    [End Information]\
+                    "
+                ),
+                done(build_hashmap(vec![
+                    ("manufacturer", "Keysight"),
+                    ("model", "E5071C"),
+                    ("end info", ""),
+                    ("begin information", "")
+                ]))
+            );
         }
 
         #[test]
@@ -468,6 +532,44 @@ pub mod ts {
                         Metadata::Reference(vec![25.0, 50.0, 50.0, 100.0])
                     ]
                 ))
+            );
+            assert_eq!(
+                header(b"\
+                    ! An example Touchstone header\n\
+                    [version] 2.0\n\
+                    # MHz T RI R 50.0\n\
+                    ! Technically you can't have more than 100,\n\
+                    ! but this is just a test\n\
+                    [Number Of Ports] 1024\n\
+                    [number of frequencies] 2000\n\
+                    [number of noise frequencies] 2000\n\
+                    [Begin Information]\n\
+                    [Manufacturer] Keysight\n\
+                    [Model] E5071C\n\
+                    [End Information]\n\
+                    ! Will it blend?\n\
+                "),
+                done((
+                    (2, 0),
+                    OptionLine {
+                        freq_units: FreqUnits::MHz,
+                        domain: Domain::Transfer,
+                        format: Format::RI,
+                        system_impedance: Some(50.0),
+                    },
+                    1024,
+                    vec![
+                        Metadata::NumberOfFrequencies(2000),
+                        Metadata::NumberOfNoiseFrequencies(2000),
+                        Metadata::Information(
+                            vec![
+                                ("model", "E5071C"),
+                                ("manufacturer", "Keysight")
+                            ].into_iter().map(|(k, v)|
+                                (k.to_string(), v.to_string())
+                            ).collect::<HashMap<_, _>>())
+                    ])
+                )
             );
         }
     }
