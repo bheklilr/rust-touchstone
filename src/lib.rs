@@ -126,6 +126,19 @@ pub mod ts {
         pub effective_noise_resistance: f64,
     }
 
+    #[derive(Debug, PartialEq)]
+    pub enum MatrixFormat {
+        Full,
+        Lower,
+        Upper,
+    }
+
+    impl Default for MatrixFormat {
+        fn default() -> MatrixFormat {
+            MatrixFormat::Full
+        }
+    }
+
     #[derive(Debug)]
     pub struct Touchstone2 {
         pub num_ports: i32,
@@ -133,6 +146,7 @@ pub mod ts {
         pub two_port_order: Option<TwoPortOrder>,
         pub reference_impedance: Option<Vec<f64>>,
         pub information: HashMap<String, String>,
+        pub matrix_format: Option<MatrixFormat>,
         pub network_data: Vec<Box<[(f64, f64)]>>,
         pub noise_data: Option<Box<[NoisePoint]>>,
     }
@@ -170,6 +184,7 @@ pub mod ts {
     named!(comment_line<()>,
         value!((), delimited!(char!('!'), take_until!("\n"), char!('\n')))
     );
+
     named!(comment_block<()>,
         value!((), many0!(comment_line))
     );
@@ -247,6 +262,7 @@ pub mod ts {
         do_parse!(
             tag_no_case!("[number of ports]") >> many0!(space) >>
             num_ports: int >>
+            many0!(space) >>
             opt!(complete!(comment_block)) >>
             (num_ports)
         )
@@ -258,7 +274,7 @@ pub mod ts {
             tpo: alt!(
                 value!(TwoPortOrder::TPO_12_21, tag!("12_21")) |
                 value!(TwoPortOrder::TPO_21_12, tag!("21_12"))
-            ) >>
+            ) >> many0!(space) >>
             opt!(complete!(comment_block)) >>
             (tpo)
         )
@@ -267,7 +283,8 @@ pub mod ts {
     named!(number_of_frequencies<i32>,
         do_parse!(
             tag_no_case!("[number of frequencies]") >> many0!(space) >>
-            num_freqs: map_opt!(take_until!("\n"), parse) >>
+            num_freqs: int >>
+            many0!(space) >>
             opt!(complete!(comment_block)) >>
             (num_freqs)
         )
@@ -276,7 +293,8 @@ pub mod ts {
     named!(number_of_noise_frequencies<i32>,
         do_parse!(
             tag_no_case!("[number of noise frequencies]") >> many0!(space) >>
-            num_freqs: map_opt!(take_until!("\n"), parse) >>
+            num_freqs: int >>
+            many0!(space) >>
             opt!(complete!(comment_block)) >>
             (num_freqs)
         )
@@ -288,6 +306,19 @@ pub mod ts {
             refs: many1!(ws!(float)) >>
             opt!(complete!(comment_block)) >>
             (refs)
+        )
+    );
+
+    named!(matrix_format<MatrixFormat>,
+        do_parse!(
+            tag_no_case!("[matrix format]") >> many0!(space) >>
+            mat_fmt: alt!(
+                value!(MatrixFormat::Full, tag_no_case!("full")) |
+                value!(MatrixFormat::Lower, tag_no_case!("lower")) |
+                value!(MatrixFormat::Upper, tag_no_case!("upper"))
+            ) >> many0!(space) >>
+            opt!(complete!(comment_block)) >>
+            (mat_fmt)
         )
     );
 
@@ -344,6 +375,7 @@ pub mod ts {
         NumberOfNoiseFrequencies(i32),
         Reference(Vec<f64>),
         Information(HashMap<String, String>),
+        MatrixFormat(MatrixFormat),
     }
 
     named!(metadata<Vec<Metadata>>,
@@ -353,6 +385,7 @@ pub mod ts {
                 map!(number_of_frequencies,       |x| Some(Metadata::NumberOfFrequencies(x))) |
                 map!(number_of_noise_frequencies, |x| Some(Metadata::NumberOfNoiseFrequencies(x))) |
                 map!(reference,                   |x| Some(Metadata::Reference(x))) |
+                map!(matrix_format,               |x| Some(Metadata::MatrixFormat(x))) |
                 map!(information,                 |x| Some(Metadata::Information(x))) |
                 value!(None, comment_line)
             ))),
@@ -405,6 +438,24 @@ pub mod ts {
         fn test_number_of_ports() {
             assert_eq!(number_of_ports(b"[number of ports] 1"), done(1));
             assert_eq!(number_of_ports(b"[number of ports] 1!\n"), done(1));
+        }
+
+        #[test]
+        fn test_two_port_order() {
+            assert_eq!(two_port_order(b"[two-port order] 12_21"), done(TwoPortOrder::TPO_12_21));
+            assert_eq!(two_port_order(b"[two-port order] 12_21 ! two port order\n"), done(TwoPortOrder::TPO_12_21));
+            assert_eq!(two_port_order(b"[two-port order] 21_12"), done(TwoPortOrder::TPO_21_12));
+            assert_eq!(two_port_order(b"[two-port order] 21_12 ! two port order \n"), done(TwoPortOrder::TPO_21_12));
+        }
+
+        #[test]
+        fn test_matrix_format() {
+            assert_eq!(matrix_format(b"[matrix format] full"), done(MatrixFormat::Full));
+            assert_eq!(matrix_format(b"[matrix format] full ! matrix format\n"), done(MatrixFormat::Full));
+            assert_eq!(matrix_format(b"[matrix format] lower"), done(MatrixFormat::Lower));
+            assert_eq!(matrix_format(b"[matrix format] lower ! matrix format\n"), done(MatrixFormat::Lower));
+            assert_eq!(matrix_format(b"[matrix format] upper"), done(MatrixFormat::Upper));
+            assert_eq!(matrix_format(b"[matrix format] upper ! matrix format\n"), done(MatrixFormat::Upper));
         }
 
         #[test]
@@ -507,6 +558,7 @@ pub mod ts {
                     ! test\n\
                     [number of frequencies] 20\n\
                     ! test\n\
+                    [matrix format] Lower\n\
                     [two-port order] 12_21\n\
                     ! test\n\
                     [Number of noise frequenCIES] 1\n\
@@ -527,6 +579,7 @@ pub mod ts {
                     4,
                     vec![
                         Metadata::NumberOfFrequencies(20),
+                        Metadata::MatrixFormat(MatrixFormat::Lower),
                         Metadata::TwoPortOrder(TwoPortOrder::TPO_12_21),
                         Metadata::NumberOfNoiseFrequencies(1),
                         Metadata::Reference(vec![25.0, 50.0, 50.0, 100.0])
