@@ -179,6 +179,7 @@ pub mod ts {
         do_parse!(
             tag_no_case!("[version]") >> many0!(space) >>
             ver: separated_pair!(int, char!('.'), int) >>
+            opt!(complete!(comment_line)) >>
             (ver)
         )
     );
@@ -234,6 +235,7 @@ pub mod ts {
                 v: float >>
                 (v)
             ))) >>
+            opt!(complete!(comment_line)) >>
             (OptionLine {
                 freq_units: units.unwrap_or(Default::default()),
                 domain: domain.unwrap_or(Default::default()),
@@ -248,6 +250,7 @@ pub mod ts {
         do_parse!(
             tag_no_case!("[number of ports]") >> many0!(space) >>
             num_ports: int >>
+            opt!(complete!(comment_line)) >>
             (num_ports)
         )
     );
@@ -260,6 +263,7 @@ pub mod ts {
                 value!(TwoPortOrder::TPO_12_21, tag!("12_21")) |
                 value!(TwoPortOrder::TPO_21_12, tag!("21_12"))
             ) >>
+            opt!(complete!(comment_line)) >>
             (tpo)
         )
     );
@@ -269,6 +273,7 @@ pub mod ts {
         do_parse!(
             tag_no_case!("[number of frequencies]") >> many0!(space) >>
             num_freqs: map_opt!(take_until!("\n"), parse) >>
+            opt!(complete!(comment_line)) >>
             (num_freqs)
         )
     );
@@ -278,6 +283,7 @@ pub mod ts {
         do_parse!(
             tag_no_case!("[number of noise frequencies]") >> many0!(space) >>
             num_freqs: map_opt!(take_until!("\n"), parse) >>
+            opt!(complete!(comment_line)) >>
             (num_freqs)
         )
     );
@@ -285,8 +291,9 @@ pub mod ts {
     named!(
         reference<Vec<f64>>,
         do_parse!(
-            tag_no_case!("[reference]") >> many0!(multispace) >>
+            tag_no_case!("[reference]") >> many0!(alt!(value!((), multispace) | comment_line)) >>
             refs: many1!(ws!(float)) >>
+            opt!(complete!(comment_line)) >>
             (refs)
         )
     );
@@ -305,6 +312,7 @@ pub mod ts {
                 take_until!("\n"),
                 |x| from_utf8(x).map(|s| s.trim().to_string())
             ) >>
+            opt!(complete!(comment_line)) >>
             (kw, "".to_string())
         )
     );
@@ -337,21 +345,29 @@ pub mod ts {
 
     named!(
         metadata<Vec<Metadata>>,
-        many0!(ws!(alt!(
-            map!(two_port_order, Metadata::TwoPortOrder) |
-            map!(number_of_frequencies, Metadata::NumberOfFrequencies) |
-            map!(number_of_noise_frequencies, Metadata::NumberOfNoiseFrequencies) |
-            map!(reference, Metadata::Reference)
-        )))
+        map!(many0!(ws!(alt!(
+            map!(two_port_order,              |x| Some(Metadata::TwoPortOrder(x))) |
+            map!(number_of_frequencies,       |x| Some(Metadata::NumberOfFrequencies(x))) |
+            map!(number_of_noise_frequencies, |x| Some(Metadata::NumberOfNoiseFrequencies(x))) |
+            map!(reference,                   |x| Some(Metadata::Reference(x))) |
+            value!(None, comment_line)
+        ))),
+        |v: Vec<Option<Metadata>>| v.into_iter().filter_map(|i| i).collect::<Vec<_>>()
+        )
     );
 
     named!(
         header<((i32, i32), OptionLine, i32, Vec<Metadata>)>,
         ws!(do_parse!(
+            opt!(complete!(comment_line)) >>
             ver: version >>
+            opt!(complete!(comment_line)) >>
             opt_line: option_line >>
+            opt!(complete!(comment_line)) >>
             num_ports: number_of_ports >>
+            opt!(complete!(comment_line)) >>
             metadata: metadata >>
+            opt!(complete!(comment_line)) >>
             (ver, opt_line, num_ports, metadata)
         ))
     );
@@ -373,16 +389,19 @@ pub mod ts {
         #[test]
         fn test_version() {
             assert_eq!(version(b"[version] 2.0"), done((2, 0)));
+            assert_eq!(version(b"[version] 2.0 ! test\n"), done((2, 0)));
         }
 
         #[test]
         fn test_option_line() {
-            assert_eq!(option_line(b"#"), done(Default::default()))
+            assert_eq!(option_line(b"#"), done(Default::default()));
+            assert_eq!(option_line(b"#!/usr/bin/bash\n"), done(Default::default()));
         }
 
         #[test]
         fn test_number_of_ports() {
             assert_eq!(number_of_ports(b"[number of ports] 1"), done(1));
+            assert_eq!(number_of_ports(b"[number of ports] 1!\n"), done(1));
         }
 
         #[test]
@@ -397,6 +416,41 @@ pub mod ts {
                     [Number of noise frequenCIES] 1\n\
                     [Reference]\n\
                     25.0 50 5.0e1 100\n\
+                "),
+                done((
+                    (2, 0),
+                    OptionLine {
+                        freq_units: FreqUnits::Hz,
+                        domain: Domain::Scattering,
+                        format: Format::DB,
+                        system_impedance: Some(25.0),
+                    },
+                    4,
+                    vec![
+                        Metadata::NumberOfFrequencies(20),
+                        Metadata::TwoPortOrder(TwoPortOrder::TPO_12_21),
+                        Metadata::NumberOfNoiseFrequencies(1),
+                        Metadata::Reference(vec![25.0, 50.0, 50.0, 100.0])
+                    ]
+                ))
+            );
+            assert_eq!(
+                header(b"\
+                    !\n\
+                    [version] 2.0\n\
+                    # Hz DB R 25!foobar\n\
+                    [number of ports] 4! = 24\n\
+                    ! test\n\
+                    [number of frequencies] 20\n\
+                    ! test\n\
+                    [two-port order] 12_21\n\
+                    ! test\n\
+                    [Number of noise frequenCIES] 1\n\
+                    ! test\n\
+                    [Reference]\n\
+                    ! This one is just mean\n\
+                    25.0 50 5.0e1 100\n\
+                    ! test\n\
                 "),
                 done((
                     (2, 0),
