@@ -145,6 +145,12 @@ pub mod ts {
     pub type NoiseData = Vec<NoisePoint>;
 
     #[derive(Debug)]
+    pub struct NetworkData {
+        pub freq_data: Vec<f64>,
+        pub param_data: Vec<ParamData>,
+    }
+
+    #[derive(Debug)]
     pub struct Touchstone2 {
         pub num_ports: i32,
         pub option_line: OptionLine,
@@ -152,7 +158,7 @@ pub mod ts {
         pub reference_impedance: Option<Vec<f64>>,
         pub information: HashMap<String, String>,
         pub matrix_format: Option<MatrixFormat>,
-        pub network_data: Vec<ParamData>,
+        pub network_data: NetworkData,
         pub noise_data: Option<NoiseData>,
     }
 
@@ -421,8 +427,53 @@ pub mod ts {
                     num_ports: i32,
                     num_freqs: i32,
                     matrix_format: MatrixFormat)
-                    -> IResult<&[u8], Vec<ParamData>> {
-        unimplemented!();
+                    -> IResult<&[u8], NetworkData> {
+        let vals_per_row = match matrix_format {
+            MatrixFormat::Full => 1 + 2 * num_ports * num_ports,
+            _ => 1 + num_ports + (num_ports - 1) * (num_ports - 1),
+        } as usize;
+        let total_vals = vals_per_row * num_freqs as usize;
+
+        fn _network_data(total_vals: usize, i: &[u8]) -> IResult<&[u8], Vec<f64>> {
+            do_parse!(i,
+                tag_no_case!("[network data]") >>
+                many0!(alt!(value!((), many0!(multispace)) | comment_block)) >> // This is where the problem is
+                data: map!(
+                    many_m_n!(
+                        total_vals, total_vals,
+                        ws!(alt!(map!(float, Some) | value!(None, comment_block)))
+                    ),
+                    |v: Vec<Option<_>>| v.into_iter().filter_map(|x| x).collect()
+                ) >>
+                many0!(alt!(value!((), many0!(multispace)) | comment_block)) >> // This is where the problem is
+                opt!(tag_no_case!("[end]")) >>
+                (data)
+            )
+        }
+
+        let result = _network_data(total_vals, input);
+        result.map(|v| {
+            let rows = v.chunks(vals_per_row);
+            let mut freqs = Vec::with_capacity(num_freqs as usize);
+            let mut param_data: Vec<Vec<(f64, f64)>> = Vec::with_capacity(vals_per_row - 1);
+            for i in 1..vals_per_row {
+                param_data.push(Vec::with_capacity(num_freqs as usize));
+            }
+
+            for row in rows {
+                freqs.push(row[0]);
+                for col in 1..vals_per_row {
+                    if col % 2 == 1 {
+                        param_data[col / 2].push((row[col], row[col + 1]));
+                    }
+                }
+            }
+
+            NetworkData {
+                freq_data: freqs,
+                param_data: param_data,
+            }
+        })
     }
 
     fn noise_data(input: &[u8], num_noise_freqs: i32) -> IResult<&[u8], Vec<NoiseData>> {
