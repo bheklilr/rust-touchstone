@@ -139,10 +139,10 @@ pub mod ts {
         }
     }
 
-    type ParamPoint = (f64, f64);
-    type ParamData = Vec<ParamPoint>;
+    pub type ParamPoint = (f64, f64);
+    pub type ParamData = Vec<ParamPoint>;
 
-    type NoiseData = Vec<NoisePoint>;
+    pub type NoiseData = Vec<NoisePoint>;
 
     #[derive(Debug)]
     pub struct Touchstone2 {
@@ -169,7 +169,7 @@ pub mod ts {
         from_utf8(bytes).ok().and_then(|s| s.trim().parse().ok())
     }
 
-    named!(int<i32>,
+    named!(int(&[u8]) -> i32,
         map_res!(
             map_res!(
                 ws!(digit),
@@ -185,7 +185,7 @@ pub mod ts {
         (c == 69u8 || c == 101u8) // E or e
     }
 
-    named!(float<f64>,
+    named!(float(&[u8]) -> f64,
         map_res!(
             map_res!(
                 take_while!(is_valid_float_char),
@@ -195,15 +195,15 @@ pub mod ts {
         )
     );
 
-    named!(comment_line<()>,
+    named!(comment_line(&[u8]) -> (),
         value!((), delimited!(char!('!'), take_until!("\n"), char!('\n')))
     );
 
-    named!(comment_block<()>,
+    named!(comment_block(&[u8]) -> (),
         value!((), many0!(comment_line))
     );
 
-    named!(version<(i32, i32)>,
+    named!(version(&[u8]) -> (i32, i32),
         do_parse!(
             tag_no_case!("[version]") >> many0!(space) >>
             ver: separated_pair!(int, char!('.'), int) >>
@@ -216,7 +216,7 @@ pub mod ts {
         !(c == ' ' as u8 || c == '\t' as u8 || c == '\n' as u8 || c == '\r' as u8)
     }
 
-    named!(option_line<OptionLine>,
+    named!(option_line(&[u8]) -> OptionLine,
         do_parse!(
             char!('#') >>
             units: opt!(complete!(do_parse!(
@@ -267,7 +267,7 @@ pub mod ts {
         )
     );
 
-    named!(number_of_ports<i32>,
+    named!(number_of_ports(&[u8]) -> i32,
         do_parse!(
             tag_no_case!("[number of ports]") >> many0!(space) >>
             num_ports: int >>
@@ -277,7 +277,7 @@ pub mod ts {
         )
     );
 
-    named!(two_port_order<TwoPortOrder>,
+    named!(two_port_order(&[u8]) -> TwoPortOrder,
         do_parse!(
             tag_no_case!("[two-port order]") >> many0!(space) >>
             tpo: alt!(
@@ -289,7 +289,7 @@ pub mod ts {
         )
     );
 
-    named!(number_of_frequencies<i32>,
+    named!(number_of_frequencies(&[u8]) -> i32,
         do_parse!(
             tag_no_case!("[number of frequencies]") >> many0!(space) >>
             num_freqs: int >>
@@ -299,7 +299,7 @@ pub mod ts {
         )
     );
 
-    named!(number_of_noise_frequencies<i32>,
+    named!(number_of_noise_frequencies(&[u8]) -> i32,
         do_parse!(
             tag_no_case!("[number of noise frequencies]") >> many0!(space) >>
             num_freqs: int >>
@@ -309,7 +309,7 @@ pub mod ts {
         )
     );
 
-    named!(reference<Vec<f64>>,
+    named!(reference(&[u8]) -> Vec<f64>,
         do_parse!(
             tag_no_case!("[reference]") >> many0!(alt!(value!((), multispace) | comment_line)) >>
             refs: many1!(ws!(float)) >>
@@ -318,7 +318,7 @@ pub mod ts {
         )
     );
 
-    named!(matrix_format<MatrixFormat>,
+    named!(matrix_format(&[u8]) -> MatrixFormat,
         do_parse!(
             tag_no_case!("[matrix format]") >> many0!(space) >>
             mat_fmt: alt!(
@@ -331,7 +331,7 @@ pub mod ts {
         )
     );
 
-    named!(kwarg<(String, String)>,
+    named!(kwarg(&[u8]) -> (String, String),
         do_parse!(
             char!('[') >>
             kw: map_res!(
@@ -360,7 +360,7 @@ pub mod ts {
         )
     );
 
-    named!(information<HashMap<String, String>>,
+    named!(information(&[u8]) -> HashMap<String, String>,
         ws!(delimited!(
             tag_no_case!("[begin information]"),
             map!(
@@ -387,7 +387,7 @@ pub mod ts {
         MatrixFormat(MatrixFormat),
     }
 
-    named!(metadata<Vec<Metadata>>,
+    named!(metadata(&[u8]) -> Vec<Metadata>,
         map!(
             many0!(ws!(alt!(
                 map!(two_port_order,              |x| Some(Metadata::TwoPortOrder(x))) |
@@ -402,7 +402,7 @@ pub mod ts {
         )
     );
 
-    named!(header<((i32, i32), OptionLine, i32, Vec<Metadata>)>,
+    named!(header(&[u8]) -> ((i32, i32), OptionLine, i32, Vec<Metadata>),
         ws!(do_parse!(
             opt!(complete!(comment_block)) >>
             ver: version >>
@@ -553,6 +553,9 @@ pub mod ts {
                     [number of ports] 4\n\
                     [number of frequencies] 20\n\
                     [two-port order] 12_21\n\
+                    \n\
+                    \n\
+                    \n\
                     [Number of noise frequenCIES] 1\n\
                     [Reference]\n\
                     25.0 50 5.0e1 100\n\
